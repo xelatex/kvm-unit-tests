@@ -4,6 +4,10 @@
 .globl boot_idt
 boot_idt = 0
 
+.global gdt64_desc
+.global idt_descr
+.global tss_descr
+
 ipi_vector = 0x20
 
 max_cpus = 64
