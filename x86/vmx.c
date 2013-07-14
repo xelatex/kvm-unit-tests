@@ -130,11 +130,39 @@ void print_vmexit_info()
 	printf("\tBit 31 of reason = %x\n", (reason >> 31) & 1);
 }
 
+void test_vmclear(void)
+{
+	u64 rflags;
+
+	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
+	set_rflags(rflags);
+	report("test vmclear", vmcs_clear(vmcs_root) == 0);
+}
+
+void test_vmxoff(void)
+{
+	bool ret;
+	u64 rflags;
+
+	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
+	set_rflags(rflags);
+	asm volatile ("vmxoff; seta %0 \n\t" : "=q"(ret) :: "cc");
+	report("test vmxoff", ret);
+}
+
+void vmx_exit(void)
+{
+	test_vmclear();
+	test_vmxoff();
+	printf("\nSUMMARY: %d tests, %d failures\n", tests, fails);
+	exit(fails ? -1 : 0);
+}
+
 int vmx_handler()
 {
 	u64 guest_rip;
 	ulong reason = vmcs_read(EXI_REASON) & 0xff;
-	ulong exit_qual = vmcs_read(EXI_QUALIFICATION);
+	//ulong exit_qual = vmcs_read(EXI_QUALIFICATION);
 
 	if ((read_cr4() & CR4_PAE) && (read_cr0() & CR0_PG)
 		&& !(rdmsr(MSR_EFER) & EFER_LMA))
@@ -151,7 +179,9 @@ int vmx_handler()
 			break;
 		case VMX_HLT:
 			printf("\nVM exit.\n");
-			exit(0);
+			vmx_exit();
+			// Should not reach here
+			break;
 		case VMX_EXC_NMI:
 		case VMX_EXTINT:
 		case VMX_INVLPG:
@@ -436,17 +466,6 @@ int test_vmxon(void)
 	//return !ret;
 }
 
-void test_vmxoff(void)
-{
-	bool ret;
-	u64 rflags;
-
-	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-	set_rflags(rflags);
-	asm volatile ("vmxoff; seta %0 \n\t" : "=q"(ret) :: "cc");
-	report("test vmxoff", ret);
-}
-
 void test_vmptrld(void)
 {
 	u64 rflags;
@@ -454,15 +473,6 @@ void test_vmptrld(void)
 	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
 	set_rflags(rflags);
 	report("test vmptrld", make_vmcs_current(vmcs_root) == 0);
-}
-
-void test_vmclear(void)
-{
-	u64 rflags;
-
-	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
-	set_rflags(rflags);
-	report("test vmclear", vmcs_clear(vmcs_root) == 0);
 }
 
 int main(void)
@@ -480,9 +490,7 @@ int main(void)
 	init_vmcs(&vmcs_root);
 
 	vmx_run();
-
-	test_vmclear();
-	test_vmxoff();
+	// Should not reach here
 
 exit:
 	printf("\nSUMMARY: %d tests, %d failures\n", tests, fails);
