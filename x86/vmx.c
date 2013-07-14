@@ -38,23 +38,6 @@ void report(const char *name, int result)
 	}
 }
 
-int test_vmx_capability(void)
-{
-	struct cpuid r;
-	u64 ret1, ret2;
-	r = cpuid(1);
-	ret1 = ((r.c) >> 5) & 1;
-	ret2 = ((rdmsr(MSR_IA32_FEATURE_CONTROL) & 0x5) == 0x5);
-	if (ret2 == 0){
-		wrmsr(MSR_IA32_FEATURE_CONTROL, 0x5);
-		ret2 = ((rdmsr(MSR_IA32_FEATURE_CONTROL) & 0x5) == 0x5);
-	}
-	report("test vmx capability", ret1 & ret2);
-	// TODO: Fix here after patches are accepted
-	return 0;
-	return !(ret1 & ret2);
-}
-
 u64 inline get_rflags(void)
 {
 	u64 r;
@@ -133,9 +116,11 @@ void vmx_run()
 	printf("VMLAUNCH error, ret=%d\n", ret);
 }
 
-void print_vmexit_info(ulong reason, ulong exit_qual)
+void print_vmexit_info()
 {
 	u64 guest_rip;
+	ulong reason = vmcs_read(EXI_REASON) & 0xff;
+	ulong exit_qual = vmcs_read(EXI_QUALIFICATION);
 	printf("Here in vmx_handler!\n");
 	printf("\tvmexit reason = %d\n", reason);
 	printf("\texit qualification = 0x%x\n", exit_qual);
@@ -162,7 +147,7 @@ int vmx_handler()
 			vmcs_write(GUEST_RIP, guest_rip + 3);
 			return 0;
 		case VMX_IO:
-			print_vmexit_info(reason, exit_qual);
+			print_vmexit_info();
 			break;
 		case VMX_HLT:
 			printf("\nVM exit.\n");
@@ -172,7 +157,8 @@ int vmx_handler()
 		case VMX_INVLPG:
 		case VMX_CR:
 		case VMX_EPT_VIOLATION:
-			print_vmexit_info(reason, exit_qual);
+		default:
+			print_vmexit_info();
 	}
 	// TODO:
 	exit(-1);
@@ -417,6 +403,23 @@ void init_vmx(void)
 	memset(host_stack, 0, PAGE_SIZE);
 	host_syscall_stack = alloc_page();
 	memset(host_syscall_stack, 0, PAGE_SIZE);
+}
+
+int test_vmx_capability(void)
+{
+	struct cpuid r;
+	u64 ret1, ret2;
+	r = cpuid(1);
+	ret1 = ((r.c) >> 5) & 1;
+	ret2 = ((rdmsr(MSR_IA32_FEATURE_CONTROL) & 0x5) == 0x5);
+	if (ret2 == 0){
+		wrmsr(MSR_IA32_FEATURE_CONTROL, 0x5);
+		ret2 = ((rdmsr(MSR_IA32_FEATURE_CONTROL) & 0x5) == 0x5);
+	}
+	report("test vmx capability", ret1 & ret2);
+	// TODO: Fix here after patches are accepted
+	return 0;
+	return !(ret1 & ret2);
 }
 
 int test_vmxon(void)
