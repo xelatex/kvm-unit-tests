@@ -10,7 +10,7 @@ struct vmcs {
 	char data[0];
 };
 
-struct exec_regs {
+struct regs {
 	u64 r15;
 	u64 r14;
 	u64 r13;
@@ -28,16 +28,6 @@ struct exec_regs {
 	u64 rcx;
 	u64 rax;
 };
-
-struct exec_cxt {
-	struct vmcs *vmcs;
-	struct exec_regs regs;
-	void *stack;
-	void *syscall_stack;
-};
-
-ulong fix_cr0_set, fix_cr0_clr;
-ulong fix_cr4_set, fix_cr4_clr;
 
 static union vmx_basic {
 	u64 val;
@@ -58,28 +48,28 @@ static union vmx_ctrl_pin {
 	struct {
 		u32 set, clr;
 	};
-} ctrl_pin;
+} ctrl_pin_rev;
 
 static union vmx_ctrl_cpu {
 	u64 val;
 	struct {
 		u32 set, clr;
 	};
-} ctrl_cpu[2];
+} ctrl_cpu_rev[2];
 
 static union vmx_ctrl_exit {
 	u64 val;
 	struct {
 		u32 set, clr;
 	};
-} ctrl_exit;
+} ctrl_exit_rev;
 
 static union vmx_ctrl_ent {
 	u64 val;
 	struct {
 		u32 set, clr;
 	};
-} ctrl_enter;
+} ctrl_enter_rev;
 
 static union vmx_ept_vpid {
 	u64 val;
@@ -414,8 +404,8 @@ enum Ctrl1
 #define CR0_PG		1ul << 31
 #define CR0_PE		1ul << 0
 #define CR4_VMXE	1ul << 0
-#define CR4_PCIDE	1ul << 17
 #define CR4_PAE		1ul << 5
+#define CR4_PCIDE	1ul << 17
 #define MSR_EFER_LMA	1ul << 10
 #define MSR_EFER_LME	1ul << 8
 
