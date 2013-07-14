@@ -4,6 +4,8 @@
 #include "desc.h"
 #include "vmx.h"
 #include "msr.h"
+#include "smp.h"
+#include "io.h"
 
 
 int fails = 0, tests = 0;
@@ -11,9 +13,17 @@ u32 *vmxon_region;
 struct vmcs *vmcs_root;
 struct exec_cxt *current, ec_root;
 void *io_bmp1, *io_bmp2;
+void *msr_bmp;
 u32 vpid_ctr;
 char *stack, *syscall_stack;
 char *host_stack;
+
+extern u64 gdt64_desc[];
+extern u64 idt_descr[];
+extern u64 tss_descr[];
+extern void *entry_vmx;
+extern void *entry_sysenter;
+extern void *entry_guest;
 
 void report(const char *name, int result)
 {
@@ -84,43 +94,33 @@ int make_vmcs_current(struct vmcs *vmcs)
 	return !ret;
 }
 
+// entry_vmx
 asm(
 	".align	4, 0x90 \n\t"
 	".globl	entry_vmx \n\t"
 	"entry_vmx: \n\t"
 	SAVE_GPR
-	"	mov	stack + 4095, %rsp \n\t"
-	"	jmp	vmx_handler \n\t"
+	"	call	vmx_handler \n\t"
+	LOAD_GPR
+	"	vmresume\n\t"
 );
 
+// entry_sysenter
 asm(
 	".align	4, 0x90 \n\t"
 	".globl	entry_sysenter \n\t"
 	"entry_sysenter: \n\t"
 	SAVE_GPR
-	"	mov	stack + 4095, %rsp \n\t"
 	"	and	$0xf, %rax \n\t"
 	"	push	%rax \n\t"
-	"	jmp	syscall_handler \n\t"
+	"	call	syscall_handler \n\t"
+	LOAD_GPR
+	"	vmresume\n\t"
 );
 
 void syscall_handler(u64 syscall_no)
 {
-
-}
-
-void vmx_resume(struct exec_cxt *current)
-{
-	if (make_vmcs_current(current->vmcs)){
-		printf("%s : make_vmcs_current failed\n", __func__);
-		return;
-	}
-	asm volatile ("lea %0, %%rsp\n\t"
-		LOAD_GPR
-		"vmresume \n\t"
-		"mov %1, %%rsp\n\t"
-		: : "m" (current->regs), "rm" ((u64)(current->stack + PAGE_SIZE - 1))
-		: "memory");
+	printf("Here in syscall_handler, syscall_no = %d\n", syscall_no);
 }
 
 void vmx_run()
@@ -131,41 +131,71 @@ void vmx_run()
 	printf("VMLAUNCH error, ret=%d\n", ret);
 }
 
-void vmx_handler()
+int vmx_handler()
 {
+	u64 rax;
+	//static int vmexit_cnt = 2;
+	asm volatile("mov %%rax, %0\n\t" :"=g"(rax));
 	ulong reason = vmcs_read(EXI_REASON) & 0xff;
-	printf("Here in vmx_handler\n");
+	ulong exit_qual = vmcs_read(EXI_QUALIFICATION);
+	u16 io_port;
+	u64 guest_rip;
+	printf("Here in vmx_handler!!!!!!!!!!!!!!!!!!!!!!!\n");
+	printf("\ttest %rax=0x%llx\n", rax);
+	printf("\tvmexit reason = %d\n", reason);
+	printf("\texit qualification = 0x%x\n", exit_qual);
+
+	guest_rip = vmcs_read(GUEST_RIP);
+	printf("\tguest_rip = 0x%llx\n", guest_rip);
+	printf("\tBit 31 of reason = %x\n", (reason >> 31) & 1);
+	if ((read_cr4() & CR4_PAE) && (read_cr0() & CR0_PG)
+		&& !(rdmsr(MSR_EFER) & EFER_LMA))
+		printf("ERROR : PDPTEs should be checked\n");
 
 	switch (reason) {
-	    case VMX_EXC_NMI:
-	    case VMX_EXTINT:
-	    case VMX_INVLPG:
-	    case VMX_CR:
-	    case VMX_EPT_VIOLATION:
-		break;
+		case VMX_EXC_NMI:
+		case VMX_EXTINT:
+		case VMX_INVLPG:
+		case VMX_CR:
+		case VMX_EPT_VIOLATION:
+		case VMX_VMCALL:
+			//if (--vmexit_cnt){
+				vmcs_write(GUEST_RIP, guest_rip + 3);
+				return 0;
+			//}
+			break;
+		case VMX_IO:
+			break;
+		case VMX_HLT:
+			printf("\n\nVM exit\n");
+			exit(0);
+	
 	}
-	vmx_resume(current);
+	// TODO:
+	exit(-1);
+	return 1;
 }
 
+// entry_guest
 asm(
 	".align	4, 0x90 \n\t"
 	".globl	entry_guest \n\t"
 	"entry_guest: \n\t"
-	"	mov	stack + 4095, %rsp \n\t"
-	//"	call	guest_main \n\t"
+	"	call	guest_main \n\t"
 	"	hlt \n\t"
 );
 
 void guest_main(void)
 {
 	printf("Hello World!\n");
-	asm volatile("vmcall\n\t");
+	//asm volatile("mov $0x1234567890ABCDEF, %rax\n\t");
+	//asm volatile("vmcall\n\t");
+	//asm volatile("shr $0x20, %rax\n\t");
+	//asm volatile("vmcall\n\t");
 }
 
 void print_hostinfo(void)
 {
-	extern void *gdt64_desc;
-	extern void *idt_descr;
 	printf("Host info ========\n");
 	printf("\tcr0=0x%llx\n", read_cr0());
 	printf("\tcr3=0x%llx\n", read_cr3());
@@ -202,42 +232,50 @@ int init_vmcs(struct vmcs **vmcs)
 	u32 pin = PIN_EXTINT | PIN_NMI | PIN_VIRT_NMI;
 	u32 exit = EXI_INTA;
 	u32 enter = 0;
-	extern void *gdt64_desc;
-	extern void *idt_descr;
-	extern void *tss_descr;
-	extern void *entry_vmx;
-	extern void *entry_sysenter;
-	extern void *entry_guest;
 
-	vmcs_write(PF_ERROR_MASK, 0);
-	vmcs_write(PF_ERROR_MATCH, 0);
+
+	// 26.2 CHECKS ON VMX CONTROLS AND HOST-STATE AREA
+	// 26.2.1.1
+	if (!(ctrl_pin.set & PIN_NMI) && (ctrl_pin.set & PIN_VIRT_NMI))
+		ctrl_pin.set &= ~PIN_VIRT_NMI;
+	vmcs_write(PIN_CONTROLS, (pin | ctrl_pin.set) & ctrl_pin.clr);
+	ctrl_cpu[0].set |= CPU_HLT;
+	if (ctrl_cpu[0].set & CPU_TPR_SHADOW)
+		// TODO: Handle CPU use TPR shadow
+		printf("TODO: Handle CPU use TPR shadow\n");
+	// Disable VMEXIT of IO instruction
+	ctrl_cpu[0].set &= (~(CPU_IO | CPU_IO_BITMAP));
+	vmcs_write(CPU_EXEC_CTRL0, ctrl_cpu[0].set & ctrl_cpu[0].clr);
+	if (ctrl_cpu[0].set & CPU_SECONDARY)
+		vmcs_write(CPU_EXEC_CTRL1, ctrl_cpu[1].set & ctrl_cpu[1].clr);
 	vmcs_write(CR3_TARGET_COUNT, 0);
-
-	vmcs_write(VMCS_LINK_PTR,    ~0ul);
-	vmcs_write(VMCS_LINK_PTR_HI, ~0ul);
-
-	vmcs_write(VPID, ++vpid_ctr);
-
 	io_bmp1 = alloc_page();
 	io_bmp2 = alloc_page();
 	memset(io_bmp1, 0, PAGE_SIZE);
 	memset(io_bmp2, 0, PAGE_SIZE);
 	vmcs_write(IO_BITMAP_A, (u64)io_bmp1);
 	vmcs_write(IO_BITMAP_B, (u64)io_bmp2);
+	msr_bmp = alloc_page();
+	memset(msr_bmp, 0, PAGE_SIZE);
+	vmcs_write(MSR_BITMAP, (u64)msr_bmp);
+	vmcs_write(VPID, ++vpid_ctr);
 
-	vmcs_write(HOST_EFER, 0x280);
-	exit |= EXI_LOAD_EFER | EXI_HOST_64;
-	enter |= ENT_LOAD_EFER;
-	ctrl_cpu[0].set |= CPU_HLT;
+	// 26.2.1.2
+	exit |= (EXI_LOAD_EFER | EXI_HOST_64);
+	vmcs_write(HOST_EFER, rdmsr(MSR_EFER));
 
-	vmcs_write(PIN_CONTROLS, (pin | ctrl_pin.set) & ctrl_pin.clr);
-	vmcs_write(EXI_CONTROLS, (exit | ctrl_exit.set) & ctrl_exit.clr);
-	vmcs_write(ENT_CONTROLS, (enter | ctrl_enter.set) & ctrl_enter.clr);
+	// 26.2.1.3
+	enter |= (ENT_LOAD_EFER | ENT_GUEST_64);
 
-	vmcs_write(CPU_EXEC_CTRL0, ctrl_cpu[0].set & ctrl_cpu[0].clr);
-	if (ctrl_cpu[0].set & CPU_SECONDARY)
-		vmcs_write(CPU_EXEC_CTRL1, ctrl_cpu[1].set & ctrl_cpu[1].clr);
+	// 26.2.2
+	vmcs_write(HOST_CR0, read_cr0());
+	vmcs_write(HOST_CR3, read_cr3());
+	vmcs_write(HOST_CR4, read_cr4());
+	vmcs_write(HOST_SYSENTER_ESP, (u64)(syscall_stack + PAGE_SIZE - 1));
+	vmcs_write(HOST_SYSENTER_EIP, (u64)(&entry_sysenter));
+	vmcs_write(HOST_SYSENTER_CS,  SEL_KERN_CODE_64);
 
+	// 26.2.3
 	vmcs_write(HOST_SEL_CS, SEL_KERN_CODE_64);
 	vmcs_write(HOST_SEL_SS, SEL_KERN_DATA_64);
 	vmcs_write(HOST_SEL_DS, SEL_KERN_DATA_64);
@@ -245,72 +283,106 @@ int init_vmcs(struct vmcs **vmcs)
 	vmcs_write(HOST_SEL_FS, SEL_KERN_DATA_64);
 	vmcs_write(HOST_SEL_GS, SEL_KERN_DATA_64);
 	vmcs_write(HOST_SEL_TR, SEL_TSS_RUN);
-
-	vmcs_write(HOST_CR0, read_cr0());
-	vmcs_write(HOST_CR3, read_cr3());
-	vmcs_write(HOST_CR4, read_cr4());
-
 	vmcs_write(HOST_BASE_TR,   (u64)tss_descr);
 	vmcs_write(HOST_BASE_GDTR, (u64)gdt64_desc);
+	//vmcs_write(HOST_BASE_GDTR, 0xffffffffffff);
 	vmcs_write(HOST_BASE_IDTR, (u64)idt_descr);
 	vmcs_write(HOST_BASE_FS, 0);
 	vmcs_write(HOST_BASE_GS, 0);
 
-	vmcs_write(HOST_SYSENTER_CS,  SEL_KERN_CODE_64);
-	vmcs_write(HOST_SYSENTER_ESP, (u64)(syscall_stack + PAGE_SIZE - 1));
-	vmcs_write(HOST_SYSENTER_EIP, (u64)(&entry_sysenter));
-
+	// Set relevant vmcs area
+	enter = (enter | ctrl_enter.set) & ctrl_enter.clr;
+	exit = (exit | ctrl_exit.set) & ctrl_exit.clr;
+	vmcs_write(ENT_CONTROLS, enter);
+	vmcs_write(EXI_CONTROLS, exit);
+	vmcs_write(PF_ERROR_MASK, 0);
+	vmcs_write(PF_ERROR_MATCH, 0);
+	vmcs_write(VMCS_LINK_PTR,	 ~0ul);
+	vmcs_write(VMCS_LINK_PTR_HI, ~0ul);
 	vmcs_write(HOST_RSP, (u64)(host_stack + PAGE_SIZE - 1));
 	vmcs_write(HOST_RIP, (u64)(&entry_vmx));
 
-	print_hostinfo();
 
-//	vmcs_write(GUEST_CR0, read_cr0());
-//	vmcs_write(GUEST_CR3, read_cr3());
-//	vmcs_write(GUEST_CR4, read_cr4());
-/*
-	vmcs_write(GUEST_RIP, (u64)(&entry_guest));
-	vmcs_write (GUEST_RSP, (u64)(stack + PAGE_SIZE - 1));
+	// 26.3 CHECKING AND LOADING GUEST STATE
+	ulong guest_cr0, guest_cr4, guest_cr3;
+	// 26.3.1.1
+	guest_cr0 = read_cr0();
+	guest_cr4 = read_cr4();
+	guest_cr3 = read_cr3();
+	if (enter & ENT_GUEST_64) {
+		guest_cr0 |= CR0_PG;
+		guest_cr4 |= CR4_PAE;
+	}
+	if ((enter & ENT_GUEST_64) == 0){
+		guest_cr4 &= (~CR4_PCIDE);
+	}
+	if (guest_cr0 & CR0_PG)
+		guest_cr0 |= CR0_PE;
+	vmcs_write(GUEST_CR0, guest_cr0);
+	vmcs_write(GUEST_CR3, guest_cr3);
+	vmcs_write(GUEST_CR4, guest_cr4);
+	vmcs_write(GUEST_SYSENTER_CS,  SEL_KERN_CODE_64);
+	vmcs_write(GUEST_SYSENTER_ESP, (u64)(syscall_stack + PAGE_SIZE - 1));
+	vmcs_write(GUEST_SYSENTER_EIP, (u64)(&entry_sysenter));
+	vmcs_write(GUEST_DR7, 0);
+	vmcs_write(GUEST_EFER, rdmsr(MSR_EFER));
+	printf("guest_cr0 = 0x%llx\n", guest_cr0);
+	printf("guest_cr3 = 0x%llx\n", guest_cr3);
+	printf("guest_cr4 = 0x%llx\n", guest_cr4);
 
+	// 26.3.1.2
 	vmcs_write(GUEST_SEL_CS, SEL_KERN_CODE_64);
 	vmcs_write(GUEST_SEL_SS, SEL_KERN_DATA_64);
 	vmcs_write(GUEST_SEL_DS, SEL_KERN_DATA_64);
 	vmcs_write(GUEST_SEL_ES, SEL_KERN_DATA_64);
+	vmcs_write(GUEST_SEL_FS, SEL_KERN_DATA_64);
+	vmcs_write(GUEST_SEL_GS, SEL_KERN_DATA_64);
 	vmcs_write(GUEST_SEL_TR, SEL_TSS_RUN);
+	vmcs_write(GUEST_SEL_LDTR, 0);
 
-	vmcs_write(GUEST_BASE_TR,   (u64)tss_descr);
-	vmcs_write(GUEST_BASE_GDTR, (u64)gdt64_desc);
-	vmcs_write(GUEST_BASE_IDTR, (u64)idt_descr);
 	vmcs_write(GUEST_BASE_CS, 0);
 	vmcs_write(GUEST_BASE_ES, 0);
 	vmcs_write(GUEST_BASE_SS, 0);
 	vmcs_write(GUEST_BASE_DS, 0);
 	vmcs_write(GUEST_BASE_FS, 0);
 	vmcs_write(GUEST_BASE_GS, 0);
-	vmcs_write(GUEST_LIMIT_CS, ~0ul);
-	vmcs_write(GUEST_LIMIT_DS, ~0ul);
-	vmcs_write(GUEST_LIMIT_ES, ~0ul);
-	vmcs_write(GUEST_LIMIT_SS, ~0ul);
-	vmcs_write(GUEST_LIMIT_FS, ~0ul);
-	vmcs_write(GUEST_LIMIT_GS, ~0ul);
-	vmcs_write(GUEST_LIMIT_GDTR, 0);
-	vmcs_write(GUEST_LIMIT_LDTR, 0);
-	vmcs_write(GUEST_LIMIT_IDTR, 0);
-	vmcs_write(GUEST_LIMIT_TR, 0);
-	vmcs_write(GUEST_AR_CS, 0xf9b0);
-	vmcs_write(GUEST_AR_DS, 0xf930);
-	vmcs_write(GUEST_AR_ES, 0xf930);
-	vmcs_write(GUEST_AR_FS, 0xf930);
-	vmcs_write(GUEST_AR_GS, 0xf930);
-	vmcs_write(GUEST_AR_SS, 0xf930);
+	vmcs_write(GUEST_BASE_TR,   (u64)tss_descr);
+	vmcs_write(GUEST_BASE_LDTR, 0);
 
-	vmcs_write(GUEST_SYSENTER_CS,  SEL_KERN_CODE_64);
-	vmcs_write(GUEST_SYSENTER_ESP, (u64)(syscall_stack + PAGE_SIZE - 1));
-	vmcs_write(GUEST_SYSENTER_EIP, (u64)(&entry_sysenter));
+	vmcs_write(GUEST_LIMIT_CS, 0xFFFFFFFF);
+	vmcs_write(GUEST_LIMIT_DS, 0xFFFFFFFF);
+	vmcs_write(GUEST_LIMIT_ES, 0xFFFFFFFF);
+	vmcs_write(GUEST_LIMIT_SS, 0xFFFFFFFF);
+	vmcs_write(GUEST_LIMIT_FS, 0xFFFFFFFF);
+	vmcs_write(GUEST_LIMIT_GS, 0xFFFFFFFF);
+	vmcs_write(GUEST_LIMIT_LDTR, 0xffff);
+	vmcs_write(GUEST_LIMIT_TR, ((struct descr *)tss_descr)->limit);
 
+	vmcs_write(GUEST_AR_CS, 0xa09b);
+	vmcs_write(GUEST_AR_DS, 0xc093);
+	vmcs_write(GUEST_AR_ES, 0xc093);
+	vmcs_write(GUEST_AR_FS, 0xc093);
+	vmcs_write(GUEST_AR_GS, 0xc093);
+	vmcs_write(GUEST_AR_SS, 0xc093);
+	vmcs_write(GUEST_AR_LDTR, 0x82);
+	vmcs_write(GUEST_AR_TR, 0x8b);
+
+	// 26.3.1.3
+	vmcs_write(GUEST_BASE_GDTR, (u64)gdt64_desc);
+	//vmcs_write(GUEST_BASE_GDTR, 0xffffffffffff);
+	vmcs_write(GUEST_BASE_IDTR, (u64)idt_descr);
+	vmcs_write(GUEST_LIMIT_GDTR, ((struct descr *)gdt64_desc)->limit & 0xffff);
+	vmcs_write(GUEST_LIMIT_IDTR, ((struct descr *)idt_descr)->limit & 0xffff);
+
+	// 26.3.1.4
+	vmcs_write(GUEST_RIP, (u64)(&entry_guest));
+	vmcs_write(GUEST_RSP, (u64)(stack + PAGE_SIZE - 1));
+	vmcs_write(GUEST_RFLAGS, 0x2);
+
+	// 26.3.1.5
 	vmcs_write(GUEST_ACTV_STATE, 0);
+	vmcs_write(GUEST_INTR_STATE, 0);
 
-*/
 	return 0;
 }
 

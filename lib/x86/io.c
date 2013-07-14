@@ -59,9 +59,9 @@ static void print_serial(const char *buf)
 
 void puts(const char *s)
 {
-	spin_lock(&lock);
+//	spin_lock(&lock);
 	print_serial(s);
-	spin_unlock(&lock);
+//	spin_unlock(&lock);
 }
 
 void exit(int code)

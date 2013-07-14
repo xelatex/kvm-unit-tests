@@ -93,6 +93,11 @@ static union vmx_ept_vpid {
 	};
 } ept_vpid;
 
+struct descr {
+	u16 limit;
+	u64 addr;
+};
+
 enum Encoding
 {
 	// 16-Bit Control Fields
@@ -216,7 +221,7 @@ enum Encoding
 	CR3_TARGET_2		= 0x600cul,
 	CR3_TARGET_3		= 0x600eul,
 
-            // Natural-Width R/O Data Fields
+	// Natural-Width R/O Data Fields
 	EXI_QUALIFICATION	= 0x6400ul,
 	IO_RCX			= 0x6402ul,
 	IO_RSI			= 0x6404ul,
@@ -322,6 +327,7 @@ enum Reason
 enum Ctrl_exi
 {
 	EXI_HOST_64             = 1UL << 9,
+	EXI_LOAD_PERF			= 1UL << 12,
 	EXI_INTA                = 1UL << 15,
 	EXI_LOAD_EFER           = 1UL << 21,
 };
@@ -346,6 +352,7 @@ enum Ctrl0
 	CPU_INVLPG			= 1ul << 9,
 	CPU_CR3_LOAD			= 1ul << 15,
 	CPU_CR3_STORE			= 1ul << 16,
+	CPU_TPR_SHADOW			= 1ul << 21,
 	CPU_NMI_WINDOW			= 1ul << 22,
 	CPU_IO				= 1ul << 24,
 	CPU_IO_BITMAP			= 1ul << 25,
@@ -388,23 +395,42 @@ enum Ctrl1
 		"push %r15 \n\t"		
 
 #define LOAD_GPR			\
-		"pop %%r15 \n\t"		\
-		"pop %%r14 \n\t"		\
-		"pop %%r13 \n\t"		\
-		"pop %%r12 \n\t"		\
-		"pop %%r11 \n\t"		\
-		"pop %%r10 \n\t"		\
-		"pop %%r9 \n\t"		\
-		"pop %%r8 \n\t"		\
-		"pop %%rdi \n\t"		\
-		"pop %%rsi \n\t"		\
-		"pop %%rbp \n\t"		\
-		"pop %%rdx \n\t"		\
-		"pop %%rcx \n\t"		\
-		"pop %%rbx \n\t"		\
-		"pop %%rax \n\t"		
+		"pop %r15 \n\t"		\
+		"pop %r14 \n\t"		\
+		"pop %r13 \n\t"		\
+		"pop %r12 \n\t"		\
+		"pop %r11 \n\t"		\
+		"pop %r10 \n\t"		\
+		"pop %r9 \n\t"		\
+		"pop %r8 \n\t"		\
+		"pop %rdi \n\t"		\
+		"pop %rsi \n\t"		\
+		"pop %rbp \n\t"		\
+		"pop %rdx \n\t"		\
+		"pop %rcx \n\t"		\
+		"pop %rbx \n\t"		\
+		"pop %rax \n\t"		
 
-#define CR4_VMXE	0x1
+#define CR0_PG		1ul << 31
+#define CR0_PE		1ul << 0
+#define CR4_VMXE	1ul << 0
+#define CR4_PCIDE	1ul << 17
+#define CR4_PAE		1ul << 5
+#define MSR_EFER_LMA	1ul << 10
+#define MSR_EFER_LME	1ul << 8
+
+#define VMX_IO_SIZE_MASK		0x7
+#define _VMX_IO_BYTE			1
+#define _VMX_IO_WORD			2
+#define _VMX_IO_LONG			3
+#define VMX_IO_DIRECTION_MASK		1ul << 3
+#define VMX_IO_IN			1ul << 3
+#define VMX_IO_OUT			0
+#define VMX_IO_STRING			1ul << 4
+#define VMX_IO_REP			1ul << 5
+#define VMX_IO_OPRAND_DX		1ul << 6
+#define VMX_IO_PORT_MASK		0xFFFF0000
+#define VMX_IO_PORT_SHIFT		16
 
 #endif
 

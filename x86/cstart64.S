@@ -4,9 +4,9 @@
 .globl boot_idt
 boot_idt = 0
 
-.global gdt64_desc
-.global idt_descr
-.global tss_descr
+.globl idt_descr
+.globl tss_descr
+.globl gdt64_desc
 
 ipi_vector = 0x20
 
