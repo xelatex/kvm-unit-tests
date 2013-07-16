@@ -406,6 +406,8 @@ enum Ctrl1
 #define VMX_IO_PORT_MASK		0xFFFF0000
 #define VMX_IO_PORT_SHIFT		16
 
+#define TEST_VMRESUME		0x1001
+
 #endif
 
 

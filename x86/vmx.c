@@ -109,8 +109,6 @@ asm(
 	"	and	$0xf, %rax \n\t"
 	"	push	%rax \n\t"
 	"	call	syscall_handler \n\t"
-	LOAD_GPR
-	"	vmresume\n\t"
 );
 
 void syscall_handler(u64 syscall_no)
@@ -124,6 +122,13 @@ void vmx_run()
 	printf("Now run vm.\n\n");
 	asm volatile("vmlaunch \n\t seta %0\n\t":"=m"(ret));
 	printf("VMLAUNCH error, ret=%d\n", ret);
+}
+
+void vmx_resume()
+{
+	asm volatile(LOAD_GPR
+		"vmresume\n\t");
+	// VMRESUME fail if reach here
 }
 
 void print_vmexit_info()
@@ -175,7 +180,7 @@ void vmx_exit(void)
 	exit(fails ? -1 : 0);
 }
 
-int vmx_handler()
+void vmx_handler()
 {
 	u64 guest_rip;
 	ulong reason = vmcs_read(EXI_REASON) & 0xff;
@@ -189,8 +194,15 @@ int vmx_handler()
 
 	switch (reason) {
 		case VMX_VMCALL:
+			switch (regs.rax){
+				case TEST_VMRESUME:
+					regs.rax = 0xFFFF;
+					break;
+				default:
+					printf("ERROR : Invalid VMCALL param : %d\n", regs.rax);
+			}
 			vmcs_write(GUEST_RIP, guest_rip + 3);
-			return 0;
+			goto vmx_resume;
 		case VMX_IO:
 			print_vmexit_info();
 			break;
@@ -198,18 +210,38 @@ int vmx_handler()
 			printf("\nVM exit.\n");
 			vmx_exit();
 			// Should not reach here
-			break;
+			goto vmx_exit;
 		case VMX_EXC_NMI:
 		case VMX_EXTINT:
 		case VMX_INVLPG:
 		case VMX_CR:
 		case VMX_EPT_VIOLATION:
 		default:
-			print_vmexit_info();
 	}
-	// TODO:
+	printf("ERROR : Unhandled vmx exit.\n");
+	print_vmexit_info();
+vmx_exit:
 	exit(-1);
-	return 1;
+vmx_resume:
+	vmx_resume();
+	// Should not reach here
+	exit(-1);
+}
+
+void test_vmresume()
+{
+	u64 rax;
+	u64 rsp, resume_rsp;
+
+	rax = 0;
+	asm volatile("mov %%rsp, %0\n\t" : "=r"(rsp));
+	asm volatile("mov %2, %%rax\n\t"
+		"vmcall\n\t"
+		"mov %%rax, %0\n\t"
+		"mov %%rsp, %1\n\t"
+		: "=r"(rax), "=r"(resume_rsp)
+		: "g"(TEST_VMRESUME));
+	report("test vmresume", (rax == 0xFFFF) && (rsp == resume_rsp));
 }
 
 // entry_guest
@@ -229,6 +261,7 @@ void guest_main(void)
 	printf("cr3 in guest = %llx\n", read_cr3());
 	printf("cr4 in guest = %llx\n", read_cr4());
 	printf("\nHello World!\n");
+	test_vmresume();
 	//asm volatile("mov $0x1234567890ABCDEF, %rax\n\t");
 	//asm volatile("vmcall\n\t");
 	//asm volatile("shr $0x20, %rax\n\t");
