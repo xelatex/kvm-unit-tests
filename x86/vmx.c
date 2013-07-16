@@ -76,7 +76,16 @@ int vmcs_write(enum Encoding enc, u64 val)
 int make_vmcs_current(struct vmcs *vmcs)
 {
 	bool ret;
+
 	asm volatile ("vmptrld %1; seta %0" : "=q" (ret) : "m" (vmcs) : "cc");
+	return !ret;
+}
+
+int save_vmcs(struct vmcs **vmcs)
+{
+	bool ret;
+
+	asm volatile ("vmptrst %1; seta %0" : "=q" (ret) : "m" (*vmcs) : "cc");
 	return !ret;
 }
 
@@ -161,7 +170,6 @@ void test_vmxoff(void)
 
 void vmx_exit(void)
 {
-	test_vmclear();
 	test_vmxoff();
 	printf("\nSUMMARY: %d tests, %d failures\n", tests, fails);
 	exit(fails ? -1 : 0);
@@ -478,10 +486,28 @@ int test_vmxon(void)
 void test_vmptrld(void)
 {
 	u64 rflags;
+	struct vmcs *vmcs;
 
+	vmcs = alloc_page();
+	vmcs->revision_id = basic.revision;
 	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
 	set_rflags(rflags);
-	report("test vmptrld", make_vmcs_current(vmcs_root) == 0);
+	report("test vmptrld", make_vmcs_current(vmcs) == 0);
+}
+
+void test_vmptrst(void)
+{
+	u64 rflags;
+	int ret;
+	struct vmcs *vmcs1, *vmcs2;
+
+	vmcs1 = alloc_page();
+	memset(vmcs1, 0, PAGE_SIZE);
+	init_vmcs(&vmcs1);
+	rflags = get_rflags() | X86_EFLAGS_CF | X86_EFLAGS_ZF;
+	set_rflags(rflags);
+	ret = save_vmcs(&vmcs2);
+	report("test vmptrst", (!ret) && (vmcs1 == vmcs2));
 }
 
 int main(void)
@@ -496,6 +522,9 @@ int main(void)
 	init_vmx();
 	if (test_vmxon() != 0)
 		goto exit;
+	test_vmptrld();
+	test_vmclear();
+	test_vmptrst();
 	init_vmcs(&vmcs_root);
 
 	vmx_run();
