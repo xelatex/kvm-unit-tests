@@ -223,6 +223,8 @@ asm(
 
 void guest_main(void)
 {
+	// If reach here, VMLAUNCH runs OK
+	report("test vmlaunch", 1);
 	printf("cr0 in guest = %llx\n", read_cr0());
 	printf("cr3 in guest = %llx\n", read_cr3());
 	printf("cr4 in guest = %llx\n", read_cr4());
@@ -529,6 +531,7 @@ int main(void)
 
 	vmx_run();
 	// Should not reach here
+	report("test vmlaunch", 0);
 
 exit:
 	printf("\nSUMMARY: %d tests, %d failures\n", tests, fails);
