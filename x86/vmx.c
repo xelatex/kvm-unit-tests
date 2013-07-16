@@ -217,6 +217,7 @@ void vmx_handler()
 		case VMX_CR:
 		case VMX_EPT_VIOLATION:
 		default:
+			break;
 	}
 	printf("ERROR : Unhandled vmx exit.\n");
 	print_vmexit_info();
