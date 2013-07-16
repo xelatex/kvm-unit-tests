@@ -11,22 +11,22 @@ struct vmcs {
 };
 
 struct regs {
-	u64 r15;
-	u64 r14;
-	u64 r13;
-	u64 r12;
-	u64 r11;
-	u64 r10;
-	u64 r9;
-	u64 r8;
-	u64 rdi;
-	u64 rsi;
-	u64 rbp;
-	u64 cr2;
-	u64 rbx;
-	u64 rdx;
-	u64 rcx;
 	u64 rax;
+	u64 rcx;
+	u64 rdx;
+	u64 rbx;
+	u64 cr2;
+	u64 rbp;
+	u64 rsi;
+	u64 rdi;
+	u64 r8;
+	u64 r9;
+	u64 r10;
+	u64 r11;
+	u64 r12;
+	u64 r13;
+	u64 r14;
+	u64 r15;
 };
 
 static union vmx_basic {
@@ -367,47 +367,31 @@ enum Ctrl1
 #define SEL_DATA_16   0x40
 #define SEL_TSS_RUN   0x48
 
-#define SAVE_GPR			\
-		"push %rax \n\t"		\
-		"push %rbx \n\t"		\
-		"push %rcx \n\t"		\
-		"push %rdx \n\t"		\
-		"push %rbp \n\t"		\
-		"push %rsi \n\t"		\
-		"push %rdi \n\t"		\
-		"push %r8 \n\t"		\
-		"push %r9 \n\t"		\
-		"push %r10 \n\t"		\
-		"push %r11 \n\t"		\
-		"push %r12 \n\t"		\
-		"push %r13 \n\t"		\
-		"push %r14 \n\t"		\
-		"push %r15 \n\t"		
+#define SAVE_GPR		\
+		"xchg %rax, regs \n\t"		\
+		"xchg %rbx, regs+0x8 \n\t"		\
+		"xchg %rcx, regs+0x10 \n\t"		\
+		"xchg %rdx, regs+0x18 \n\t"		\
+		"xchg %rbp, regs+0x28 \n\t"		\
+		"xchg %rsi, regs+0x30 \n\t"		\
+		"xchg %rdi, regs+0x38 \n\t"		\
+		"xchg %r8, regs+0x40 \n\t"		\
+		"xchg %r9, regs+0x48 \n\t"		\
+		"xchg %r10, regs+0x50 \n\t"		\
+		"xchg %r11, regs+0x58 \n\t"		\
+		"xchg %r12, regs+0x60 \n\t"		\
+		"xchg %r13, regs+0x68 \n\t"		\
+		"xchg %r14, regs+0x70 \n\t"		\
+		"xchg %r15, regs+0x78 \n\t"	
 
-#define LOAD_GPR			\
-		"pop %r15 \n\t"		\
-		"pop %r14 \n\t"		\
-		"pop %r13 \n\t"		\
-		"pop %r12 \n\t"		\
-		"pop %r11 \n\t"		\
-		"pop %r10 \n\t"		\
-		"pop %r9 \n\t"		\
-		"pop %r8 \n\t"		\
-		"pop %rdi \n\t"		\
-		"pop %rsi \n\t"		\
-		"pop %rbp \n\t"		\
-		"pop %rdx \n\t"		\
-		"pop %rcx \n\t"		\
-		"pop %rbx \n\t"		\
-		"pop %rax \n\t"		
+#define LOAD_GPR	SAVE_GPR
+
+#define CR0_PE		1ul << 0
 
 #define CR0_PG		1ul << 31
-#define CR0_PE		1ul << 0
 #define CR4_VMXE	1ul << 0
 #define CR4_PAE		1ul << 5
 #define CR4_PCIDE	1ul << 17
-#define MSR_EFER_LMA	1ul << 10
-#define MSR_EFER_LME	1ul << 8
 
 #define VMX_IO_SIZE_MASK		0x7
 #define _VMX_IO_BYTE			1

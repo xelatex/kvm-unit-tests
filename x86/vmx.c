@@ -19,6 +19,7 @@ char *guest_syscall_stack, *host_syscall_stack;
 u32 ctrl_pin, ctrl_enter, ctrl_exit, ctrl_cpu[2];
 ulong fix_cr0_set, fix_cr0_clr;
 ulong fix_cr4_set, fix_cr4_clr;
+struct regs regs;
 
 extern u64 gdt64_desc[];
 extern u64 idt_descr[];
@@ -118,16 +119,24 @@ void vmx_run()
 
 void print_vmexit_info()
 {
-	u64 guest_rip;
+	u64 guest_rip, guest_rsp;
 	ulong reason = vmcs_read(EXI_REASON) & 0xff;
 	ulong exit_qual = vmcs_read(EXI_QUALIFICATION);
-	printf("Here in vmx_handler!\n");
+	guest_rip = vmcs_read(GUEST_RIP);
+	guest_rsp = vmcs_read(GUEST_RSP);
+	printf("VMEXIT info:\n");
 	printf("\tvmexit reason = %d\n", reason);
 	printf("\texit qualification = 0x%x\n", exit_qual);
-
-	guest_rip = vmcs_read(GUEST_RIP);
+	printf("\tBit 31 of reason = %x\n", (vmcs_read(EXI_REASON) >> 31) & 1);
 	printf("\tguest_rip = 0x%llx\n", guest_rip);
-	printf("\tBit 31 of reason = %x\n", (reason >> 31) & 1);
+	printf("\tRAX=0x%llx    RBX=0x%llx    RCX=0x%llx    RDX=0x%llx\n",
+		regs.rax, regs.rbx, regs.rcx, regs.rdx);
+	printf("\tRSP=0x%llx    RBP=0x%llx    RSI=0x%llx    RDI=0x%llx\n",
+		guest_rsp, regs.rbp, regs.rsi, regs.rdi);
+	printf("\tR8 =0x%llx    R9 =0x%llx    R10=0x%llx    R11=0x%llx\n",
+		regs.r8, regs.r9, regs.r10, regs.r11);
+	printf("\tR12=0x%llx    R13=0x%llx    R14=0x%llx    R15=0x%llx\n",
+		regs.r12, regs.r13, regs.r14, regs.r15);
 }
 
 void test_vmclear(void)
@@ -206,7 +215,10 @@ asm(
 
 void guest_main(void)
 {
-	printf("Hello World!\n");
+	printf("cr0 in guest = %llx\n", read_cr0());
+	printf("cr3 in guest = %llx\n", read_cr3());
+	printf("cr4 in guest = %llx\n", read_cr4());
+	printf("\nHello World!\n");
 	//asm volatile("mov $0x1234567890ABCDEF, %rax\n\t");
 	//asm volatile("vmcall\n\t");
 	//asm volatile("shr $0x20, %rax\n\t");
@@ -304,9 +316,6 @@ void init_vmcs_guest(void)
 	vmcs_write(GUEST_SYSENTER_EIP, (u64)(&entry_sysenter));
 	vmcs_write(GUEST_DR7, 0);
 	vmcs_write(GUEST_EFER, rdmsr(MSR_EFER));
-	printf("\tguest_cr0 = 0x%llx\n", guest_cr0);
-	printf("\tguest_cr3 = 0x%llx\n", guest_cr3);
-	printf("\tguest_cr4 = 0x%llx\n", guest_cr4);
 
 	// 26.3.1.2
 	vmcs_write(GUEST_SEL_CS, SEL_KERN_CODE_64);
